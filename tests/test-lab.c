@@ -134,6 +134,108 @@ void test_buddy_init(void)
 }
 
 
+/**
+ * Repeatedly allocates and frees small blocks.
+ * After all frees, the pool should be completely restored.
+ */
+
+
+void test_small_allocs_and_frees(void)
+{
+    struct buddy_pool pool;
+    size_t size = UINT64_C(1) << MIN_K;
+    buddy_init(&pool, size);
+
+
+    void *ptrs[10];
+    for (int i = 0; i < 10; i++) {
+        ptrs[i] = buddy_malloc(&pool, 1);
+        assert(ptrs[i] != NULL);
+    }
+
+
+    for (int i = 0; i < 10; i++) {
+        buddy_free(&pool, ptrs[i]);
+    }
+
+
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+
+/**
+ * Allocates two adjacent buddy blocks, frees them,
+ * and verifies that they coalesce into a larger block.
+ */
+void test_coalescing_buddies(void)
+{
+    struct buddy_pool pool;
+    buddy_init(&pool, UINT64_C(1) << MIN_K);
+
+
+    void *a = buddy_malloc(&pool, (UINT64_C(1) << (MIN_K - 1)) - sizeof(struct avail));
+    void *b = buddy_malloc(&pool, (UINT64_C(1) << (MIN_K - 1)) - sizeof(struct avail));
+
+
+    assert(a != NULL && b != NULL);
+
+
+    buddy_free(&pool, a);
+    buddy_free(&pool, b);
+
+
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+
+/**
+ * Same as above, but frees in reverse order.
+ * Verifies that coalescing works regardless of free order.
+ */
+void test_reverse_order(void)
+{
+    struct buddy_pool pool;
+    buddy_init(&pool, UINT64_C(1) << MIN_K);
+
+
+    void *a = buddy_malloc(&pool, (UINT64_C(1) << (MIN_K - 1)) - sizeof(struct avail));
+    void *b = buddy_malloc(&pool, (UINT64_C(1) << (MIN_K - 1)) - sizeof(struct avail));
+
+
+    buddy_free(&pool, b);
+    buddy_free(&pool, a);
+
+
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+
+
+
+/**
+ * Allocate the smallest possible block allowed by the allocator.
+ * Confirms that allocator takes the minimum size (SMALLEST_K).
+ */
+void test_minimum_k_block_allocation(void)
+{
+    struct buddy_pool pool;
+    buddy_init(&pool, UINT64_C(1) << MIN_K);
+
+
+    void *ptr = buddy_malloc(&pool, 1);
+    struct avail *block = (struct avail *)ptr - 1;
+    assert(block->kval == SMALLEST_K);
+
+
+    buddy_free(&pool, ptr);
+    check_buddy_pool_full(&pool);
+    buddy_destroy(&pool);
+}
+
+
 int main(void) {
   time_t t;
   unsigned seed = (unsigned)time(&t);
@@ -145,5 +247,14 @@ int main(void) {
   RUN_TEST(test_buddy_init);
   RUN_TEST(test_buddy_malloc_one_byte);
   RUN_TEST(test_buddy_malloc_one_large);
+  RUN_TEST(test_small_allocs_and_frees);
+  RUN_TEST(test_coalescing_buddies);
+  RUN_TEST(test_reverse_order);
+  RUN_TEST(test_minimum_k_block_allocation);
+
+
+
+
+ 
 return UNITY_END();
 }
