@@ -28,38 +28,93 @@ raise(SIGKILL); \
 */
 size_t btok(size_t bytes)
 {
-//DO NOT use math.pow
+    size_t k = SMALLEST_K;
+    while ((UINT64_C(1) << k) < bytes && k < MAX_K)
+    {
+        k++;
+    }
+    return k;
 }
 struct avail *buddy_calc(struct buddy_pool *pool, struct avail *buddy)
 {
+    uintptr_t offset = (uintptr_t)buddy - (uintptr_t)pool->base;
+    uintptr_t buddy_offset = offset ^ (UINT64_C(1) << buddy->kval);
+    return (struct avail *)((uintptr_t)pool->base + buddy_offset);
 }
 void *buddy_malloc(struct buddy_pool *pool, size_t size)
 {
-//get the kval for the requested size with enough room for the tag and kval
-fields
-//R1 Find a block
-//There was not enough memory to satisfy the request thus we need to set error
-and return NULL
-//R2 Remove from list;
-//R3 Split required?
-//R4 Split the block
+    if (pool == NULL || size == 0)
+        return NULL;
+    size += sizeof(struct avail);
+    size_t k = btok(size);
+    size_t i = k;
+    // R1: Find a block
+    while (i <= pool->kval_m && pool->avail[i].next == &pool->avail[i])
+    {
+        i++;
+    }
+    // No block found
+    if (i > pool->kval_m)
+    {
+        errno = ENOMEM;
+        return NULL;
+    }
+    // R2: Remove block from list
+    struct avail *block = pool->avail[i].next;
+    block->prev->next = block->next;
+    block->next->prev = block->prev;
+    // R3/R4: Split if required until we get to requested size
+    while (i > k)
+    {
+        i--;
+        uintptr_t addr = (uintptr_t)block;
+        uintptr_t buddy_addr = addr + (UINT64_C(1) << i);
+        struct avail *buddy = (struct avail *)buddy_addr;
+        buddy->kval = i;
+        buddy->tag = BLOCK_AVAIL;
+        // Insert buddy into list
+        buddy->next = pool->avail[i].next;
+        buddy->prev = &pool->avail[i];
+        pool->avail[i].next->prev = buddy;
+        pool->avail[i].next = buddy;
+        block->kval = i;
+    }
+    block->tag = BLOCK_RESERVED;
+    return (void *)(block + 1);
 }
 void buddy_free(struct buddy_pool *pool, void *ptr)
 {
+    if (pool == NULL || ptr == NULL)
+        return;
+    struct avail *block = (struct avail *)ptr - 1;
+    size_t k = block->kval;
+    block->tag = BLOCK_AVAIL;
+    while (k < pool->kval_m)
+    {
+        struct avail *buddy = buddy_calc(pool, block);
+        // Check if buddy is available and same size
+        if (buddy->tag != BLOCK_AVAIL || buddy->kval != k)
+            break;
+        // Remove buddy from its free list
+        buddy->prev->next = buddy->next;
+        buddy->next->prev = buddy->prev;
+        // Merge buddy and block
+        if ((uintptr_t)buddy < (uintptr_t)block)
+        {
+            block = buddy;
+        }
+        k++;
+        block->kval = k;
+    }
+    // Insert block into appropriate free list
+    block->tag = BLOCK_AVAIL;
+    block->next = pool->avail[k].next;
+    block->prev = &pool->avail[k];
+    pool->avail[k].next->prev = block;
+    pool->avail[k].next = block;
 }
-/**
-* @brief This is a simple version of realloc.
-*
-* @param poolThe memory pool
-* @param ptr The user memory
-* @param size the new size requested
-* @return void* pointer to the new user memory
-*/
-void *buddy_realloc(struct buddy_pool *pool, void *ptr, size_t size)
-{
-//Required for Grad Students
-//Optional for Undergrad Students
-}
+
+
 void buddy_init(struct buddy_pool *pool, size_t size)
 {
 size_t kval = 0;
@@ -89,11 +144,11 @@ if (MAP_FAILED == pool->base)
 handle_error_and_die("buddy_init avail array mmap failed");
 }
 //Set all blocks to empty. We are using circular lists so the first elements
-just point
+//just point
 //to an available block. Thus the tag, and kval feild are unused burning a
-small bit of
+//small bit of
 //memory but making the code more readable. We mark these blocks as UNUSED to
-aid in debugging.
+//aid in debugging.
 for (size_t i = 0; i <= kval; i++)
 {
 pool->avail[i].next = pool->avail[i].prev = &pool->avail[i];
@@ -122,6 +177,7 @@ memset(pool,0,sizeof(struct buddy_pool));
 * This function can be useful to visualize the bits in a block. This can
 * help when figuring out the buddy_calc function!
 */
+__attribute__((unused))
 static void printb(unsigned long int b)
 {
 size_t bits = sizeof(b) * 8;

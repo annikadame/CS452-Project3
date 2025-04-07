@@ -118,7 +118,7 @@ void buddy_free(struct buddy_pool *pool, void *ptr);
 * @param size The new size of the memory block
 * @return Pointer to the new memory block
 */
-void *buddy_realloc(struct buddy_pool *pool, void *ptr, size_t size);
+
 /**
 * Initialize a new memory pool using the buddy algorithm. Internally,
 * this function uses mmap to get a block of memory to manage so should be
